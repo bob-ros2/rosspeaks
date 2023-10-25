@@ -1,0 +1,24 @@
+launch:
+
+- arg:
+    name: "ns"
+    default: "/"
+    
+- node:
+    pkg: "rosspeaks"
+    exec: "speak.py"
+    name: "speak"
+    namespace: "$(var ns)"
+    param:
+    -
+      name: "pitch"
+      value: 60
+    -
+      name: "rate"
+      value: 90
+    -
+      name: "level"
+      value: 70
+    -
+      name: "lang"
+      value: "en+f3"

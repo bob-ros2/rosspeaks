@@ -1,0 +1,186 @@
+#!/usr/bin/env python3
+#
+# Copyright 2022 BobRos
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+import os
+import subprocess
+import rclpy
+from rclpy.node import Node
+from rclpy.action import ActionServer
+from rcl_interfaces.msg import SetParametersResult
+from rcl_interfaces.msg import ParameterDescriptor
+from rclpy.qos import QoSProfile
+from rclpy.qos import DurabilityPolicy
+from std_msgs.msg import String
+from std_msgs.msg import Bool
+from rosspeaks.action import Speaking
+
+class Speak(Node):
+    """Generic speach simulator ROS node class."""
+
+    def __init__(self):
+        super().__init__('speak')
+        self.timer = None
+        self.speaking = False
+
+        self.sub_talk = self.create_subscription(
+            String, 'speak', self.topic_callback, 10)
+
+        self._action_server = ActionServer(
+            self, Speaking, 'speak', self.action_callback)
+        
+        latching_qos = QoSProfile(depth=1,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.pub_speaking = self.create_publisher(
+            Bool, 'speaking', qos_profile=latching_qos)
+        self.publish_speaking(False)
+
+        self.declare_parameter('pitch', 60, 
+            ParameterDescriptor(description=
+            'Pith of voice.'))
+        self.declare_parameter('rate', 90, 
+            ParameterDescriptor(description=
+            'Rate of voice.'))
+        self.declare_parameter('lang', 'en+f3', 
+            ParameterDescriptor(description=
+            'Language of voice.'))
+        self.declare_parameter('level', 70, 
+            ParameterDescriptor(description=
+            'Level of voice.'))
+        self.declare_parameter('exec', 'espeak', 
+            ParameterDescriptor(description=
+            "Executable which generates the voice.\n"
+            "It can be either espeak or spdsay or any custom script.\n"
+            "If providing a custom executable it will be "
+            "called in the following way:\n"
+            "script <pitch> <rate> <lang> <level> <text>"))
+        self.declare_parameter('suppress', False, 
+            ParameterDescriptor(description=
+            'Setting this flag enables or disables speaking. '
+            'If the node is already speaking it will not be '
+            'aborted if this parameter will be set.'))
+
+        self.pitch = self.get_parameter('pitch').value
+        self.rate = self.get_parameter('rate').value
+        self.lang = self.get_parameter('lang').value
+        self.level = self.get_parameter('level').value
+        self.exec = self.get_parameter('exec').value
+        self.suppress = self.get_parameter('suppress').value
+
+        self.add_on_set_parameters_callback(self.parameter_callback)
+        self.cmd_args = self.get_cmd_args()
+
+    def publish_speaking(self, flag : bool):
+        """Initiate publishing speaking flag."""
+        self.speaking = flag
+        if flag == False:
+            if not self.timer:
+                period = os.getenv('SPEAK_DONE_DELAY', '1.5') 
+                self.timer = self.create_timer(float(period), 
+                    self.publish_speaking_false_delayed)
+            else:
+                self.timer.reset()
+        else:
+            self.publish(True)
+
+    def publish_speaking_false_delayed(self):
+        """Publishes delayed speaking false state. It will be triggered 
+        by a timer. The delay can be manipulated by the environment 
+        variable SPEAK_DONE_DELAY, default value is 1.5"""
+        self.timer.cancel()
+        if not self.speaking:
+            self.publish(False)
+
+    def publish(self, flag: bool):
+        """Publishes speaking state wheather true or false. 
+        The message is latched."""
+        msg = Bool()
+        msg.data = flag
+        self.pub_speaking.publish(msg)
+        self.get_logger().debug("Published: %d" % flag)
+
+    def spdsay(self):
+        """Run spd-say."""
+        return ['spd-say', '-r', str(self.pitch), 
+            '-p', str(self.rate), '--wait', '-l', self.lang, '-i', str(self.level)]
+
+    def espeak(self):
+        """Run espeak."""
+        return ['espeak', '-p', str(self.pitch), 
+            '-s', str(self.rate), '-v', self.lang, '-a', str(self.level)]
+
+    def get_cmd_args(self):
+        """Build speak command depending on configured exec parameter."""
+        if self.exec == "espeak":
+            return self.espeak()
+        if self.exec == "spdsay":
+            return self.spdsay()
+        else:
+            return [self.exec, 
+                self.get_parameter('pitch').value,
+                self.get_parameter('rate').value, 
+                self.get_parameter('lang').value, 
+                self.get_parameter('level').value]
+
+    def parameter_callback(self, params : []):
+        """Parameter callback used by Dynamic Reconfigure."""
+        for param in params:
+            if param.name == "pitch": self.pitch = param.value
+            elif param.name == "rate": self.rate = param.value
+            elif param.name == "lang": self.lang = param.value
+            elif param.name == "level": self.level = param.value
+            elif param.name == "exec": self.exec = param.value
+            elif param.name == "suppress": self.suppress = param.value
+        self.cmd_args = self.get_cmd_args()
+        return SetParametersResult(successful=True)
+
+    def speak(self, text : str):
+        """Performs speaking and updates the speaking topic."""
+        if self.suppress: return
+        try:
+            self.publish_speaking(True)
+            cmd = [*self.cmd_args, *[text]]
+            self.get_logger().debug('speak: %s' % cmd)
+            output = subprocess.check_output(cmd, universal_newlines=True)
+            if output: self.get_logger().info(output)
+            self.publish_speaking(False)
+        except Exception as e:
+            self.get_logger().error('speak: %s' % str(e))
+
+    def topic_callback(self, msg : Bool):
+        """Speak topic message callback."""
+        self.speak(msg.data)
+
+    def action_callback(self, target_handle : Speaking):
+        """Speak action callback."""
+        feedback_msg = Speaking.Feedback()
+        feedback_msg.state = "speaking..."
+        target_handle.publish_feedback(feedback_msg)
+        self.speak(target_handle.request.text)
+        target_handle.succeed()
+        result = Speaking.Result()
+        result.result = 'Done'
+        return result
+
+# main
+
+def main():
+    rclpy.init(args=None)
+    n = Speak()
+    rclpy.spin(n)
+    rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()
