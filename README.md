@@ -6,7 +6,7 @@ engines can also be configured.
 ## Installation Prerequisites
 
 One or both of these are pre installed
-- espeak
+- espeak (default)
 - spd-say
 
 ```bash
@@ -66,7 +66,7 @@ script \<pitch\> \<rate\> \<lang\> \<level\> \<text\>
 
 > ~speak (std_msgs/String)\
 Text to speak. For better control use the action if a finished 
-feedback is needed.
+feedback is needed or use the published speaking topic.
 
 ### Published Topics
 

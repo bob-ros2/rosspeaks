@@ -45,6 +45,8 @@ class Speak(Node):
             durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.pub_speaking = self.create_publisher(
             Bool, 'speaking', qos_profile=latching_qos)
+        self.pub_spoken = self.create_publisher(
+            String, 'spoken', 10)
         self.publish_speaking(False)
 
         self.declare_parameter('pitch', 60, 
@@ -68,9 +70,9 @@ class Speak(Node):
             "script <pitch> <rate> <lang> <level> <text>"))
         self.declare_parameter('suppress', False, 
             ParameterDescriptor(description=
-            'Setting this flag enables or disables speaking. '
-            'If the node is already speaking it will not be '
-            'aborted if this parameter will be set.'))
+            "Setting this flag enables or disables speaking.\n"
+            "If the node is already speaking it will not be\n"
+            "aborted if this parameter will be set."))
 
         self.pitch = self.get_parameter('pitch').value
         self.rate = self.get_parameter('rate').value
@@ -87,7 +89,7 @@ class Speak(Node):
         self.speaking = flag
         if flag == False:
             if not self.timer:
-                period = os.getenv('SPEAK_DONE_DELAY', '1.5') 
+                period = os.getenv('SPEAK_DONE_DELAY', '2.5') 
                 self.timer = self.create_timer(float(period), 
                     self.publish_speaking_false_delayed)
             else:
@@ -96,20 +98,27 @@ class Speak(Node):
             self.publish(True)
 
     def publish_speaking_false_delayed(self):
-        """Publishes delayed speaking false state. It will be triggered 
-        by a timer. The delay can be manipulated by the environment 
-        variable SPEAK_DONE_DELAY, default value is 1.5"""
+        """Publishes delayed speaking false state as bounce protection. It will 
+        be triggered by a timer. The delay can be manipulated by the 
+        environment variable SPEAK_DONE_DELAY, default value is 1.5"""
         self.timer.cancel()
         if not self.speaking:
             self.publish(False)
 
-    def publish(self, flag: bool):
+    def publish(self, flag : bool):
         """Publishes speaking state wheather true or false. 
         The message is latched."""
         msg = Bool()
         msg.data = flag
         self.pub_speaking.publish(msg)
         self.get_logger().debug("Published: %d" % flag)
+
+    def publish_spoken(self, text : str):
+        """Publishes spoken text"""
+        msg = String()
+        msg.data = text
+        self.pub_spoken.publish(msg)
+        self.get_logger().debug("Published: %s" % text)
 
     def spdsay(self):
         """Run spd-say."""
@@ -148,30 +157,34 @@ class Speak(Node):
 
     def speak(self, text : str):
         """Performs speaking and updates the speaking topic."""
-        if self.suppress: return
+        if self.suppress: return None
         try:
             self.publish_speaking(True)
             cmd = [*self.cmd_args, *[text]]
             self.get_logger().debug('speak: %s' % cmd)
             output = subprocess.check_output(cmd, universal_newlines=True)
             if output: self.get_logger().info(output)
+            self.publish_spoken(text)
             self.publish_speaking(False)
         except Exception as e:
             self.get_logger().error('speak: %s' % str(e))
+            return False
+        return True
 
     def topic_callback(self, msg : Bool):
         """Speak topic message callback."""
         self.speak(msg.data)
 
-    def action_callback(self, target_handle : Speaking):
+    def action_callback(self, goal_handle : Speaking):
         """Speak action callback."""
         feedback_msg = Speaking.Feedback()
         feedback_msg.state = "speaking..."
-        target_handle.publish_feedback(feedback_msg)
-        self.speak(target_handle.request.text)
-        target_handle.succeed()
+        goal_handle.publish_feedback(feedback_msg)
+        success = self.speak(goal_handle.request.text)
+        if success: goal_handle.succeed()
+        else: goal_handle.abort()
         result = Speaking.Result()
-        result.result = 'Done'
+        result.result = str(success)
         return result
 
 # main

@@ -3,22 +3,50 @@ launch:
 - arg:
     name: "ns"
     default: "/"
-    
+
+- arg:
+    name: "input"
+    default: "speak"
+
+- arg:
+    name: "name"
+    default: "speak"
+
+- arg:
+    name: "lang"
+    default: "en+f3"
+
+- arg:
+    name: "pitch"
+    default: "60"
+
+- arg:
+    name: "rate"
+    default: "90"
+
+- arg:
+    name: "level"
+    default: "70"
+
 - node:
     pkg: "rosspeaks"
-    exec: "speak.py"
-    name: "speak"
+    exec: "speak"
+    name: "$(var name)"
     namespace: "$(var ns)"
     param:
     -
       name: "pitch"
-      value: 60
+      value: "$(var pitch)"
     -
       name: "rate"
-      value: 90
+      value: "$(var rate)"
     -
       name: "level"
-      value: 70
+      value: "$(var level)"
     -
       name: "lang"
-      value: "en+f3"
+      value: "$(var lang)"
+    remap:
+    -
+      from: "speak"
+      to: "$(var input)"

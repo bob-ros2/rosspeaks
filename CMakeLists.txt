@@ -35,7 +35,7 @@ ament_export_dependencies(rosidl_default_runtime)
 #ament_python_install_package(${PROJECT_NAME})
 # Install Python executables
 install(PROGRAMS
-  scripts/speak.py
+  scripts/speak
   DESTINATION lib/${PROJECT_NAME}
 )
 
